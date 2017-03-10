@@ -43,7 +43,9 @@ enum WindMode {
 };
              
 
-#define MIN_DISCHARGE_PCT 99 //will stop winding till we will reach this percent of discharge 
+#define DEFAULT_TPD       200      // 850; //turns per day  to save the load in the same state
+#define DEFAULT_FULL_T    100      // # of turns for full load     
+#define MIN_DISCHARGE_PCT 99       //will stop winding till we will reach this percent of discharge 
 
 
 //------------------------GLOBALS AND  INITIALIZATIONS---------------------------------------------------
@@ -64,11 +66,15 @@ LiquidCrystal lcd = LiquidCrystal(8, 9, 4, 5, 6, 7);
 LCDRenderer my_renderer(lcd);
 MenuSystem ms(my_renderer); //menu
 
-int   g_direction             = D_CW;
-int   g_tpd                   = 100; //850;
-int   g_mode                  = W_INIT;
-int   g_current_turns         = 0;
-int   g_current_load_pct      = 0;
+
+//TODO: make part of winder class 
+int    g_direction             = D_CW;
+int    g_tpd                   = DEFAULT_TPD;
+int    g_turns_to_full         = DEFAULT_FULL_T; 
+int    g_mode                  = W_INIT;
+int    g_current_turns         = 0;
+int    g_current_load_pct      = 0;
+time_t g_last_turn_t           = 0; //time stamp of last turn
  
 
 
@@ -131,11 +137,12 @@ void print_status(){
 
 //--------------------------------------------------------------------------------
 void do_one_turn(){
-  g_current_turns++;
+ 
   
   //TODO: stepper motor perform one full turn
   DPRINT("Turn: ");
   DPRINTLN(g_current_turns);
+  g_last_turn_t = now();
   
 }
 
@@ -144,11 +151,13 @@ void do_wind () {
 
     //save time stamp when watch was fully loaded and winder was stoped  
     static time_t winder_sleep_t = 0;
+   
+     
     int tmp_turns;
     
 
     if(g_current_turns)
-      g_current_load_pct =  (g_current_turns * 1.0 / g_tpd) * 100;  
+      g_current_load_pct =  (g_current_turns * 1.0 / g_turns_to_full) * 100;  
    
     
     switch (g_mode) {
@@ -156,10 +165,21 @@ void do_wind () {
         break;
         
       case W_LONG:          //
-        //no break here
+        if(g_current_turns == 0)    // let's suppose 
+           g_current_turns = g_turns_to_full/2;
+        if( now() - g_last_turn_t > (24*3600.0)/g_tpd ){
+          do_one_turn();
+          //do not increase turn counter 
+          //in this mode we just preserve the charge state
+          //the charge of warch remains the same as it was  
+         else {
+          //skip turn
+         }
         
+        break;
       case W_FULL:          //     
         do_one_turn();
+        g_current_turns++;  // charge watch by one turn;
         if(g_current_turns >= g_tpd) {
              DPRINTLN("Full load reached -> stop");
              g_mode = W_STOP;
@@ -169,7 +189,8 @@ void do_wind () {
         
       case W_STOP:        // 
         // calculate the discharge and decrease # of turns
-        tmp_turns = g_tpd -  g_tpd * ((now() -  winder_sleep_t)   / (24*3600.0));
+        // 
+        tmp_turns = g_turns_to_full - g_tpd * ((now() -  winder_sleep_t)   / (24*3600.0));
         g_current_turns = tmp_turns > 0 ? tmp_turns : g_current_turns; 
 
         // winder was stopped after being charged  
